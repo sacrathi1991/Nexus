@@ -17,6 +17,8 @@ GEMINI_MODEL = _settings["llm"]["model"]
 TEMPERATURE = _settings["llm"]["temperature"]
 EMBED_MODEL = _settings["embeddings"]["model"]
 EMBED_DIM = _settings["embeddings"]["dimension"]
+CHUNK_SIZE = _settings["chunking"]["chunk_size"]
+CHUNK_OVERLAP = _settings["chunking"]["chunk_overlap"]
 
 if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY is missing. Add it to your .env file.")

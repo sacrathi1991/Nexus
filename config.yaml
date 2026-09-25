@@ -4,4 +4,8 @@ llm:
 
 embeddings:
   model: models/gemini-embedding-001
-  dimension: 768
+  dimension: 3072
+
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 150
