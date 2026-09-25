@@ -81,7 +81,11 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # nullable, same reasoning as documents.uploaded_by — no auth system
+    # built yet, so there's no real user to attach a session to. Will
+    # become nullable=False once login exists and every session is
+    # required to belong to a real user.
     title = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

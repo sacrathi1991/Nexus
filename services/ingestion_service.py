@@ -86,13 +86,40 @@ def ingest_pdf(file_path: str, filename: str, company: str, year: int, doc_type:
     # constraint below. Clean it up automatically so a retry "just works"
     # without needing manual SQL — a failed attempt should be retryable,
     # not something that permanently blocks that file.
-    stale = session.query(Document).filter(Document.file_hash == file_hash).first()
+    #
+    # Deliberately EXCLUDES 'deprecated' — a deprecated document is a
+    # permanent historical record created on purpose by
+    # services/document_service.py's replace_document(), never a leftover
+    # error to clean up. Auto-deleting it here would silently destroy the
+    # exact audit trail the replace feature exists to preserve.
+    stale = session.query(Document).filter(
+        Document.file_hash == file_hash,
+        Document.status != "deprecated",
+    ).first()
     if stale:
         print(f"  Found a stale '{stale.status}' record for {filename} (document_id={stale.id}) — clearing it before retrying.")
         session.query(IngestionJob).filter(IngestionJob.document_id == stale.id).delete()
         session.query(DocumentChunk).filter(DocumentChunk.document_id == stale.id).delete()
         session.delete(stale)
         session.commit()
+
+    # If the exact same content already exists as a DEPRECATED document,
+    # inserting a new row with that same hash would still crash on the
+    # file_hash UNIQUE constraint below — but this time it SHOULD, because
+    # it means the "new" file is byte-for-byte identical to something
+    # already superseded, which is almost certainly a mistake (e.g. the
+    # wrong file was dropped into replacement_pdfs/). Catch it here with a
+    # clear message instead of an ugly IntegrityError.
+    deprecated_match = session.query(Document).filter(
+        Document.file_hash == file_hash,
+        Document.status == "deprecated",
+    ).first()
+    if deprecated_match:
+        print(f"  Skipping {filename} — this exact content was already ingested before "
+              f"(document_id={deprecated_match.id}, now deprecated). Nothing to do: "
+              f"re-ingesting identical content would just recreate what was just deprecated.")
+        session.close()
+        return
 
     # --- Step 1: create the `documents` row (status = processing) ------
     document = Document(
