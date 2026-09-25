@@ -1,0 +1,9 @@
+# Secret files
+.env
+
+# Virtual Environment
+NEXUS/
+
+# Self created files by python
+__pycache__/
+*.pyc
