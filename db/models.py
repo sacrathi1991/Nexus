@@ -105,6 +105,59 @@ class Message(Base):
     session = relationship("ChatSession", back_populates="messages")
 
 
+class SchemaChunk(Base):
+    """One row per introspected table from the NL2SQL source DB (Northwind).
+
+    This is the "RAG over schema" table: instead of chunk_text being a slice
+    of a PDF, schema_text is a plain-English description of one table's
+    columns and foreign keys. embedding lets the NL2SQL pipeline retrieve
+    only the few relevant tables for a given question, instead of stuffing
+    every table into every prompt — the same retrieval mechanism as
+    DocumentChunk, applied to schema metadata instead of document text.
+
+    Populated by services/schema_ingestion_service.py, via run_schema_ingestion.py.
+    """
+    __tablename__ = "schema_chunks"
+
+    id = Column(Integer, primary_key=True)
+    table_name = Column(String, nullable=False, unique=True)
+    schema_text = Column(Text, nullable=False)
+    embedding = Column(Vector(EMBED_DIM), nullable=False)
+    source_db = Column(String, nullable=False, default="northwind")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class NL2SQLAuditLog(Base):
+    """One row per question asked through services.nl2sql_service.ask_db()
+    (step 12 of the NL2SQL build sequence). Same reasoning as IngestionJob
+    on the RAG side: a permanent, append-only record of what happened,
+    independent of whether the underlying question succeeded or failed -
+    needed for compliance (who queried what, and when) and for debugging
+    (which questions needed retries, which failed, which path answered).
+
+    Lives in the `nexus` database, NOT `northwind` - this is metadata ABOUT
+    the app's own usage, not Northwind business data, same reasoning
+    ChatSession/Message live in `nexus` rather than the source data's DB.
+
+    Populated by services/nl2sql_service.py's ask_db(), after every
+    question - success or failure - right before it returns.
+    """
+    __tablename__ = "nl2sql_audit_log"
+
+    id = Column(Integer, primary_key=True)
+    question = Column(Text, nullable=False)
+    user_role = Column(String, nullable=True)
+    employee_id = Column(Integer, nullable=True)
+    source = Column(String, nullable=False)  # "semantic_layer" or "nl2sql_generation"
+    metric_used = Column(String, nullable=True)
+    sql_text = Column(Text, nullable=True)
+    row_count = Column(Integer, nullable=True)
+    retries_used = Column(Integer, nullable=False, default=0)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Feedback(Base):
     __tablename__ = "feedback"
 

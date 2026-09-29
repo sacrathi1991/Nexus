@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "question": "How many customers are there in total?",
+    "expected_keywords": ["91"]
+  },
+  {
+    "id": 2,
+    "question": "How many products are there in total?",
+    "expected_keywords": ["77"]
+  },
+  {
+    "id": 3,
+    "question": "How many orders have been placed in total?",
+    "expected_keywords": ["830"]
+  },
+  {
+    "id": 4,
+    "question": "What is the most expensive product, and what is its price?",
+    "expected_keywords": ["263.5"]
+  },
+  {
+    "id": 5,
+    "question": "Which employee has processed the most orders?",
+    "expected_keywords": ["Peacock"]
+  },
+  {
+    "id": 6,
+    "question": "Which customer has placed the most orders?",
+    "expected_keywords": ["SAVEA"]
+  }
+]

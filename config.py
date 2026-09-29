@@ -7,6 +7,18 @@ load_dotenv()
 # secrets — from .env via OS environment
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
+# Separate connection to the Northwind sample DB (NL2SQL source data) — a
+# different database on the same Postgres server as DATABASE_URL, kept apart
+# on purpose: DATABASE_URL is the RAG/pgvector store, this is plain
+# relational business data. Only read from, never written to by this app.
+NORTHWIND_DATABASE_URL = os.getenv("NORTHWIND_DATABASE_URL")
+# A SEPARATE, restricted (non-superuser) connection used ONLY for actually
+# EXECUTING queries against Northwind (step 11 - row-level access control).
+# NORTHWIND_DATABASE_URL above connects as nexus_user, which owns these
+# tables and is a Postgres SUPERUSER - Postgres always bypasses row-level
+# security for superusers and table owners, no matter what policies exist.
+# nl2sql_app has no such bypass, so RLS policies actually apply to it.
+NORTHWIND_APP_DATABASE_URL = os.getenv("NORTHWIND_APP_DATABASE_URL")
 
 # resolve config.yaml relative to this file, not the current working directory
 _config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
@@ -25,3 +37,9 @@ if not GOOGLE_API_KEY:
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL is missing. Add it to your .env file.")
+
+if not NORTHWIND_DATABASE_URL:
+    raise ValueError("NORTHWIND_DATABASE_URL is missing. Add it to your .env file.")
+
+if not NORTHWIND_APP_DATABASE_URL:
+    raise ValueError("NORTHWIND_APP_DATABASE_URL is missing. Add it to your .env file.")

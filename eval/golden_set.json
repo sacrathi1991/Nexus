@@ -1,0 +1,66 @@
+[
+  {
+    "id": 1,
+    "question": "Who is the CEO of TCS?",
+    "expected_answer": "Rajesh Gopinathan is the Chief Executive Officer and Managing Director of TCS.",
+    "expected_keywords": ["Rajesh Gopinathan"],
+    "expected_chunk_ids": [89, 90],
+    "doc_type": "earnings_release"
+  },
+  {
+    "id": 2,
+    "question": "What was TCS's revenue in Q1 FY23, in dollar terms?",
+    "expected_answer": "TCS's Q1 FY23 revenue was $6.78 billion, a year-on-year growth of 10.2%.",
+    "expected_keywords": ["6.78", "billion"],
+    "expected_chunk_ids": [93],
+    "doc_type": "earnings_release"
+  },
+  {
+    "id": 3,
+    "question": "What was TCS's operating margin in Q1 FY23?",
+    "expected_answer": "TCS's operating margin for Q1 FY23 was 23.1%.",
+    "expected_keywords": ["23.1"],
+    "expected_chunk_ids": [92, 93],
+    "doc_type": "earnings_release"
+  },
+  {
+    "id": 4,
+    "question": "How many employees did TCS have at the end of Q1 FY23?",
+    "expected_answer": "TCS ended Q1 FY23 with 606,331 employees.",
+    "expected_keywords": ["606,331"],
+    "expected_chunk_ids": [94],
+    "doc_type": "earnings_release"
+  },
+  {
+    "id": 5,
+    "question": "What interim dividend did TCS's board recommend?",
+    "expected_answer": "The board recommended an interim dividend of Rs. 8 per share.",
+    "expected_keywords": ["8 per share"],
+    "expected_chunk_ids": [94],
+    "doc_type": "earnings_release"
+  },
+  {
+    "id": 6,
+    "question": "What was Sherwin-Williams' total sales in 2022?",
+    "expected_answer": "Sherwin-Williams' 2022 sales were $22.1 billion.",
+    "expected_keywords": ["22.1"],
+    "expected_chunk_ids": [53],
+    "doc_type": "investor_presentation"
+  },
+  {
+    "id": 7,
+    "question": "What was Sherwin-Williams' Paint Stores Group revenue in 2022?",
+    "expected_answer": "The Paint Stores Group had $12.7 billion in 2022 revenue.",
+    "expected_keywords": ["12.7"],
+    "expected_chunk_ids": [47],
+    "doc_type": "investor_presentation"
+  },
+  {
+    "id": 8,
+    "question": "What was Sherwin-Williams' adjusted EPS in 2022?",
+    "expected_answer": "Sherwin-Williams' 2022 adjusted EPS was $8.73.",
+    "expected_keywords": ["8.73"],
+    "expected_chunk_ids": [53],
+    "doc_type": "investor_presentation"
+  }
+]
