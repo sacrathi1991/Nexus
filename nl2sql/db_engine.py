@@ -30,5 +30,10 @@ from sqlalchemy import create_engine
 
 from config import NORTHWIND_DATABASE_URL, NORTHWIND_APP_DATABASE_URL
 
-northwind_engine = create_engine(NORTHWIND_DATABASE_URL)
-northwind_query_engine = create_engine(NORTHWIND_APP_DATABASE_URL)
+_CONNECT_ARGS = {"connect_timeout": 10}
+# Same reasoning as db/database.py's engine - without this, a connection
+# attempt while Docker/Postgres is unreachable can hang indefinitely with
+# no error instead of failing fast.
+
+northwind_engine = create_engine(NORTHWIND_DATABASE_URL, connect_args=_CONNECT_ARGS)
+northwind_query_engine = create_engine(NORTHWIND_APP_DATABASE_URL, connect_args=_CONNECT_ARGS)

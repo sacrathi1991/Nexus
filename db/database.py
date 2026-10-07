@@ -11,7 +11,16 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 from config import DATABASE_URL
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"connect_timeout": 10},
+    # Without this, attempting to connect while Postgres/Docker is
+    # unreachable can hang INDEFINITELY with no error - observed directly
+    # when Docker Desktop itself was down and a v3 graph call silently
+    # froze instead of failing. 10s is enough for a healthy local
+    # container to respond; anything slower means something is actually
+    # wrong and should surface as a clear connection error, not a freeze.
+)
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 

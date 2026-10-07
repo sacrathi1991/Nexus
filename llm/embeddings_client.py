@@ -25,6 +25,9 @@ from config import GOOGLE_API_KEY, EMBED_MODEL
 embeddings = GoogleGenerativeAIEmbeddings(
     model=EMBED_MODEL,
     google_api_key=GOOGLE_API_KEY,
+    request_options={"timeout": 60},
+    # Same reasoning as llm/llm_client.py's timeout=60 - without this, a
+    # stalled embedding call can hang forever instead of failing loudly.
 )
 # This line runs ONCE, the first time any other file does
 # `from llm.embeddings_client import embeddings` (Python caches imported

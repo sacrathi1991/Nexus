@@ -1,0 +1,34 @@
+Query picked up from Semantic model
+
+Question						Maps to metric
+"Which employee has processed the most orders?"		top_employee_by_orders
+"What is our total revenue?"				total_revenue
+"Who is our top customer?"				top_customer_by_orders
+"What are the top 5 products by revenue?"		top_products_by_revenue
+"How many orders has customer SAVEA placed?"		orders_count_by_customer
+
+LLM generated
+
+"Which are the top 3 customers by total spend?"
+(catalog only has "top 1 customer by order count" — not top-N, and not by spend)
+"List all products that are currently out of stock."
+(filters on products.units_in_stock = 0 — nothing in the catalog touches stock levels)
+"Which country do most of our customers come from?"
+(a GROUP BY country on customers — no catalog metric covers geography at all)
+"Show the 5 most recent orders along with the customer's company name."
+(needs a JOIN across orders + customers, ordered by date — not an aggregate metric at all)
+"Which supplier provides the most products to us?"
+(a GROUP BY supplier_id on products — the suppliers table isn't touched by any catalog metric)
+
+
+Mixed Query
+
+"What was TCS's Q1 FY23 revenue, and how many orders has our top Northwind customer placed?"
+(needs rag_agent_tool for the revenue fact, nl2sql_agent_tool for the customer fact)
+"Who is TCS's CEO, and which Northwind employee has processed the most orders?"
+(a person-fact from documents + a person-fact from the database)
+"What was Sherwin-Williams' total sales in 2022, and how many customers does Northwind have in total?"
+"What was Sherwin-Williams' Paint Stores Group revenue in 2022, and which Northwind supplier provides the most products?"
+(this one also forces free-form SQL generation on the NL2SQL side, since supplier count isn't in the metric catalog — so you'd see all three capabilities at once: RAG, semantic layer being skipped, and free-form generation)
+"What was TCS's Q1 FY23 operating margin, and what are Northwind's top 3 products by revenue?"
+(tests whether the supervisor correctly recognizes two different numeric facts are both needed, not just one)

@@ -25,6 +25,7 @@ from nl2sql.response_parser import parse_llm_sql_response
 from nl2sql.db_engine import northwind_query_engine
 from nl2sql.access_control import apply_user_context
 from nl2sql.semantic_layer import match_metric, missing_required_parameters, execute_metric, format_response
+from nl2sql.metrics_catalog import get_metric
 from nl2sql.audit_log import log_query
 from llm.llm_client import llm
 
@@ -133,8 +134,17 @@ def _ask_db_semantic_layer(question: str, metric_name: str, parameters: dict, us
     # Templated, not an LLM call - see format_response()'s docstring for why
     # this path can afford to skip the extra API call the free-form path needs.
     answer = format_response(metric_name, parameters, rows)
+
+    # Surface the metric's OWN sql_template, for the same reason the
+    # free-form path surfaces its generated SQL - groundedness. This is
+    # the fixed template (with :param placeholders), not the literal
+    # substituted query psycopg2 sent - showing the actual parameter
+    # values too would need threading them out of execute_metric()
+    # separately, not done here to keep this simple.
+    sql = get_metric(metric_name)["sql_template"]
+
     return {
-        "question": question, "tables_used": [], "sql": None, "rows": rows,
+        "question": question, "tables_used": [], "sql": sql, "rows": rows,
         "error": None, "attempts": [], "assumption": None, "clarification_question": None,
         "source": "semantic_layer", "metric_used": metric_name, "answer": answer,
     }

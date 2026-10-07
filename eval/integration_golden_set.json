@@ -1,0 +1,38 @@
+[
+  {
+    "id": 1,
+    "question": "What was TCS's Q1 FY23 revenue in dollar terms?",
+    "expected_tools": ["rag_agent_tool"],
+    "expected_keywords": ["6.78"]
+  },
+  {
+    "id": 2,
+    "question": "What was Sherwin-Williams' total sales in 2022?",
+    "expected_tools": ["rag_agent_tool"],
+    "expected_keywords": ["22.1"]
+  },
+  {
+    "id": 3,
+    "question": "Which employee has processed the most orders?",
+    "expected_tools": ["nl2sql_agent_tool"],
+    "expected_keywords": ["Peacock"]
+  },
+  {
+    "id": 4,
+    "question": "How many customers are there in total?",
+    "expected_tools": ["nl2sql_agent_tool"],
+    "expected_keywords": ["91"]
+  },
+  {
+    "id": 5,
+    "question": "What was TCS's Q1 FY23 revenue, and how many orders has our top Northwind customer placed?",
+    "expected_tools": ["rag_agent_tool", "nl2sql_agent_tool"],
+    "expected_keywords": ["6.78", "31"]
+  },
+  {
+    "id": 6,
+    "question": "What is the current weather in Paris?",
+    "expected_tools": [],
+    "expected_keywords": []
+  }
+]

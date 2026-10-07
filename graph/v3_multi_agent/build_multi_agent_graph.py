@@ -1,0 +1,258 @@
+"""
+graph/v3_multi_agent/build_multi_agent_graph.py
+
+WHY THIS VERSION (v3) EXISTS: v2 (graph/v2_single_agent) already fixes v1's
+"can only call one tool" limitation - it can call both rag_tool and
+nl2sql_tool for one compound question. v3 exists to demonstrate a
+DIFFERENT axis of change, not a further capability fix: instead of ONE
+LLM reasoning about both raw tools directly, EACH tool gets wrapped in
+its OWN independent agent (its own LLM, its own compiled graph, its own
+internal reasoning loop), and a SUPERVISOR agent coordinates between
+them - the supervisor never sees rag_tool/nl2sql_tool directly, only the
+2 wrapped sub-agents.
+
+This is exactly Part 2's pattern from Other_Documents/Learning_Examples/
+single_vs_multi_agent_demo.py (multi-agent: N single-tool sub-agents +
+1 supervisor), applied to Nexus's 2 real tools instead of mock ones.
+
+For today's 2 simple tools, v2 and v3 will often produce near-identical
+answers - the real value of v3 shows up as tools/sub-agents grow more
+complex or numerous, where each sub-agent can have its OWN specialized
+reasoning (e.g. a future sub-agent that itself uses multiple raw tools)
+without the top-level supervisor needing to understand any of that detail.
+
+Called from: run_chat_v3.py
+"""
+
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.prebuilt import ToolNode
+
+from graph.common.text_utils import extract_text
+from graph.common.response_cache import get_cached_response, set_cached_response
+
+from llm.llm_client import llm
+from graph.common.agent_tools import make_rag_tool, make_nl2sql_tool
+
+
+def _make_one_tool_agent(bound_tool):
+    """Builds and compiles ONE single-tool sub-agent - its own LLM, its
+    own agent<->tools loop, bound to only ONE tool. This sub-agent has no
+    knowledge that any other tool or sub-agent exists; it is fully
+    independent and could be invoked entirely on its own.
+
+    Same shape as v2's build_agent_graph(), just with a list of exactly
+    1 tool instead of 2 - this is deliberate: it's the same mechanical
+    pattern, applied at a smaller scope, that gets nested one level deeper
+    for the multi-agent version below.
+    """
+    llm_with_one_tool = llm.bind_tools([bound_tool])
+
+    def agent_node(state: MessagesState):
+        response = llm_with_one_tool.invoke(state["messages"])
+        return {"messages": [response]}
+
+    def should_continue(state: MessagesState):
+        last_message = state["messages"][-1]
+        if getattr(last_message, "tool_calls", None):
+            return "tools"
+        return END
+
+    graph = StateGraph(MessagesState)
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", ToolNode([bound_tool]))
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
+    graph.add_edge("tools", "agent")
+
+    return graph.compile()  # graph.compile() #1 or #2 - one per sub-agent
+
+
+def _stream_and_report(compiled_graph, label: str, initial_messages: list) -> dict:
+    """Runs a compiled graph using .stream() instead of .invoke(), printing
+    a live progress line for every step as it happens - which tool is
+    being called (and with what argument), and a preview of what came
+    back - instead of staying silent until the whole chain finishes.
+
+    This is purely a VISIBILITY layer: it changes nothing about what the
+    graph computes, only how much of its progress is visible while it
+    runs. Used for BOTH the supervisor's own loop and each sub-agent's
+    internal loop (with a different "label" per level), so nested
+    reasoning is visible at every level, not just the top one.
+
+    stream_mode="values" means each yielded item is the FULL current
+    state (the growing messages list), so the last message at each step
+    is always the newest thing that just happened - no manual diffing
+    needed to figure out what's new.
+    """
+    final_state = {"messages": initial_messages}
+    for state in compiled_graph.stream({"messages": initial_messages}, stream_mode="values"):
+        final_state = state
+        last_message = state["messages"][-1]
+
+        tool_calls = getattr(last_message, "tool_calls", None)
+        if tool_calls:
+            for tc in tool_calls:
+                print(f"  [{label}] -> calling {tc['name']}({tc['args']})")
+        elif getattr(last_message, "type", None) == "tool":
+            preview = extract_text(last_message.content)
+            preview = preview[:150] + ("..." if len(preview) > 150 else "")
+            print(f"  [{label}] <- result: {preview}")
+        elif getattr(last_message, "type", None) == "ai":
+            print(f"  [{label}] done reasoning.")
+
+    return final_state
+
+
+def _run_subagent_and_get_final_text(compiled_subagent, label: str, subtask: str) -> str:
+    """Runs a compiled sub-agent to completion on one subtask (streaming
+    its own internal progress under the given label), returning only its
+    final text answer. The SUPERVISOR never sees how many times the
+    sub-agent called its own tool - only this final text crosses back up
+    to it - but the TERMINAL now shows it, via _stream_and_report's print
+    statements, so a human watching isn't left in the dark.
+    """
+    print(f"  [{label}] starting on subtask: {subtask!r}")
+    result = _stream_and_report(compiled_subagent, label, [HumanMessage(content=subtask)])
+    return extract_text(result["messages"][-1].content)
+
+
+def build_multi_agent_graph(user_context: dict = None):
+    """Builds the full multi-agent hierarchy for one conversation:
+    2 independent sub-agents (Step A), each wrapped as a plain tool the
+    supervisor can call (Step B), and one supervisor bound to those
+    wrapped tools (Step C).
+
+    Returns (compiled_supervisor_graph, session_holder, nl2sql_source_log) -
+    session_holder is the same session_id-tracking mechanism as v2, and
+    nl2sql_source_log is a mutable list nl2sql_tool appends to every time
+    it runs, so the caller can report "picked from the semantic model" vs
+    "LLM generated its own SQL" explicitly, for every NL2SQL call made
+    this turn - see make_nl2sql_tool()'s docstring in agent_tools.py.
+    """
+    session_holder = {"session_id": None}
+    nl2sql_source_log = []
+
+    # --- Step A: 2 separately-compiled, single-tool sub-agents ------------
+    rag_tool = make_rag_tool(session_holder)
+    nl2sql_tool = make_nl2sql_tool(user_context, nl2sql_source_log)
+
+    rag_agent = _make_one_tool_agent(rag_tool)
+    nl2sql_agent = _make_one_tool_agent(nl2sql_tool)
+
+    # --- Step B: wrap each compiled sub-agent as a plain tool --------------
+    # This is "agent-as-a-tool" - the supervisor calls these exactly like
+    # it would call rag_tool/nl2sql_tool directly, but each one is secretly
+    # a full agent with its own internal reasoning loop.
+    @tool
+    def rag_agent_tool(subtask: str) -> str:
+        """Delegate to the RAG agent - it can answer questions from
+        ingested financial documents (earnings reports, investor
+        presentations - e.g. TCS, Sherwin-Williams)."""
+        print("[Supervisor] delegating to RAG agent...")
+        return _run_subagent_and_get_final_text(rag_agent, "RAG Agent", subtask)
+
+    @tool
+    def nl2sql_agent_tool(subtask: str) -> str:
+        """Delegate to the NL2SQL agent - it can answer questions from the
+        Northwind business database (orders, customers, products,
+        employees, suppliers)."""
+        print("[Supervisor] delegating to NL2SQL agent...")
+        return _run_subagent_and_get_final_text(nl2sql_agent, "NL2SQL Agent", subtask)
+
+    supervisor_tools = [rag_agent_tool, nl2sql_agent_tool]
+
+    # --- Step C: the supervisor - SAME loop shape as v2's agent, bound to
+    # SUB-AGENTS instead of raw tools ---------------------------------------
+    supervisor_llm = llm.bind_tools(supervisor_tools)
+
+    def supervisor_node(state: MessagesState):
+        response = supervisor_llm.invoke(state["messages"])
+        return {"messages": [response]}
+
+    def supervisor_should_continue(state: MessagesState):
+        last_message = state["messages"][-1]
+        if getattr(last_message, "tool_calls", None):
+            return "tools"
+        return END
+
+    graph = StateGraph(MessagesState)
+    graph.add_node("supervisor", supervisor_node)
+    graph.add_node("tools", ToolNode(supervisor_tools))
+    graph.add_edge(START, "supervisor")
+    graph.add_conditional_edges("supervisor", supervisor_should_continue, {"tools": "tools", END: END})
+    graph.add_edge("tools", "supervisor")
+
+    compiled_supervisor = graph.compile()  # graph.compile() #3 - the top-level supervisor
+    # Total for this version: 3 separate graph.compile() calls
+    # (2 sub-agents + 1 supervisor), versus v2's single graph.compile().
+
+    return compiled_supervisor, session_holder, nl2sql_source_log
+
+
+def ask_nexus_multiagent(question: str, session_id: int = None, user_context: dict = None) -> dict:
+    """The single entry point - checks the exact-match cache FIRST (Step
+    13 - Redis), and only runs the full multi-agent hierarchy on a cache
+    miss. Returns:
+        {"answer": str, "sub_agents_called": list[str],
+         "session_id": int | None, "from_cache": bool}
+
+    from_cache is the explicit, always-present signal for whether this
+    answer came straight from Redis or from a full pipeline run - never
+    left implicit, so a caller (or a human reading CLI output) can always
+    tell which happened without guessing from latency alone.
+
+    sub_agents_called lists which sub-agent(s) the SUPERVISOR chose to
+    delegate to, in order - notice this can only ever contain
+    "rag_agent_tool" / "nl2sql_agent_tool", never "rag_tool"/"nl2sql_tool"
+    directly, since the supervisor has no visibility into the raw tools at
+    all - that isolation is the defining feature of this version.
+
+    Known, deliberately-accepted limitation: this is a per-question cache,
+    not conversation-aware - a follow-up question that depends on earlier
+    chat history (e.g. "what about that?") could, in principle, hit a
+    stale cached answer from a completely different, unrelated
+    conversation if the exact same words were ever asked before. Not
+    fixed here - documented as a real tradeoff of keeping this simple.
+    """
+    cached = get_cached_response(question, user_context)
+    if cached is not None:
+        return {
+            "answer": cached["answer"],
+            "sub_agents_called": cached["sub_agents_called"],
+            "nl2sql_source_log": cached.get("nl2sql_source_log", []),
+            "session_id": session_id,  # THIS caller's session, never overwritten by the cache
+            "from_cache": True,
+        }
+
+    compiled_supervisor, session_holder, nl2sql_source_log = build_multi_agent_graph(user_context)
+    session_holder["session_id"] = session_id
+
+    print("[Supervisor] starting...")
+    result = _stream_and_report(compiled_supervisor, "Supervisor", [HumanMessage(content=question)])
+
+    sub_agents_called = [
+        tc["name"]
+        for m in result["messages"]
+        for tc in (getattr(m, "tool_calls", None) or [])
+    ]
+
+    response = {
+        "answer": extract_text(result["messages"][-1].content),
+        "sub_agents_called": sub_agents_called,
+        "nl2sql_source_log": nl2sql_source_log,
+        "session_id": session_holder["session_id"],
+        "from_cache": False,
+    }
+
+    # Only answer + sub_agents_called + nl2sql_source_log are cached -
+    # session_id is specific to THIS conversation and must never leak into
+    # a future cache hit for a different caller.
+    set_cached_response(question, user_context, {
+        "answer": response["answer"],
+        "sub_agents_called": response["sub_agents_called"],
+        "nl2sql_source_log": response["nl2sql_source_log"],
+    })
+
+    return response

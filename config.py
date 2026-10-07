@@ -20,6 +20,13 @@ NORTHWIND_DATABASE_URL = os.getenv("NORTHWIND_DATABASE_URL")
 # nl2sql_app has no such bypass, so RLS policies actually apply to it.
 NORTHWIND_APP_DATABASE_URL = os.getenv("NORTHWIND_APP_DATABASE_URL")
 
+# Redis connection - the exact-match response cache in front of v3
+# (graph/v3_multi_agent). Defaults to the local Docker container
+# (docker-compose.yml's "redis" service) if not set in .env - unlike the
+# Postgres URLs above, this has a working default since Redis has no
+# credentials to configure locally, so it's not required in .env.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 # resolve config.yaml relative to this file, not the current working directory
 _config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
 with open(_config_path) as f:
