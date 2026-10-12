@@ -18,9 +18,16 @@ the supervisor has no visibility into rag_tool/nl2sql_tool directly -
 only into the 2 wrapped sub-agents.
 
 Step 13 (Redis exact-match cache): ask the SAME question twice in a row
-and watch the "Response source" line change from "FULL PIPELINE (slow)"
-to "REDIS CACHE (instant)" on the second ask - that's the cache hit,
-visibly skipping the entire supervisor/sub-agent chain.
+and watch the "Response source" line change to "REDIS CACHE - EXACT
+MATCH (instant)" on the second ask - that's the cache hit, visibly
+skipping the entire supervisor/sub-agent chain.
+
+Step 14 (Redis semantic cache): ask a DIFFERENTLY-WORDED paraphrase of a
+question you already asked (e.g. "What was TCS's Q1 revenue?" then later
+"Can you tell me TCS's revenue for the first quarter?") - the exact-match
+tier misses (different text), but the semantic tier should catch it,
+printing "REDIS CACHE - SEMANTIC MATCH (instant)" along with which
+earlier question it matched and the similarity score.
 
 For any question that touches NL2SQL, watch the "NL2SQL path" line(s) -
 "semantic_layer" means a pre-built metric answered it (cheap, no SQL
@@ -54,7 +61,16 @@ while True:
     result = ask_nexus_multiagent(question, session_id=session_id, user_context=user_context)
     session_id = result["session_id"]
 
-    source_label = "REDIS CACHE (instant)" if result["from_cache"] else "FULL PIPELINE (slow)"
+    if result["from_cache"]:
+        if result["cache_type"] == "exact":
+            source_label = "REDIS CACHE - EXACT MATCH (instant)"
+        else:
+            source_label = (
+                f"REDIS CACHE - SEMANTIC MATCH (instant) - matched cached question "
+                f"{result['matched_question']!r} at {result['similarity_score']} similarity"
+            )
+    else:
+        source_label = "FULL PIPELINE (slow)"
     print(f"\nResponse source: {source_label}")
     print(f"Sub-agent(s) called: {result['sub_agents_called']}")
     for entry in result["nl2sql_source_log"]:
