@@ -18,6 +18,13 @@ This needs BOTH tools to answer correctly - watch the printed
 this - it only ever calls one tool per question).
 """
 
+import sys
+sys.stdout.reconfigure(encoding="utf-8")
+# Same fix as run_chat_v3.py - Windows' terminal codepage (cp1252) can't
+# represent every character an answer might contain (e.g. the Rupee sign
+# in TCS revenue figures), which crashes print() outright rather than
+# just rendering it oddly.
+
 from graph.v2_single_agent.build_agent_graph import ask_nexus_agent
 
 print("Nexus v2 (single agent, both tools) - type a question ('exit' to quit)\n")

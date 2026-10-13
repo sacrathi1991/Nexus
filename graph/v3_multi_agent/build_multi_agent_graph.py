@@ -25,16 +25,35 @@ Called from: run_chat_v3.py
 """
 
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 
 from graph.common.text_utils import extract_text
 from graph.common.response_cache import get_cached_response, set_cached_response
 from graph.common.semantic_cache import get_semantically_cached_response, set_semantically_cached_response
+from graph.common.mcp_tools import get_tavily_tools
 
 from llm.llm_client import llm
 from graph.common.agent_tools import make_rag_tool, make_nl2sql_tool
+
+
+SUPERVISOR_SYSTEM_PROMPT = (
+    "Before calling any tool, briefly state in one short sentence which "
+    "tool you are choosing and why it fits what the question needs right "
+    "now. If the question has multiple parts, name the plan for covering "
+    "all of them before your first tool call, then address one part at a "
+    "time. This explanation is for a human watching your reasoning live - "
+    "always include it, even when the right tool seems obvious."
+)
+# WHY THIS EXISTS: without it, Gemini's tool-calling responses contain
+# ONLY the function call itself - no accompanying text - so a human
+# watching the terminal sees "-> calling tavily_search(...)" with zero
+# visibility into WHY that tool, out of everyone available, was picked.
+# This is a visibility-only prompt addition - it does not change WHICH
+# tool gets called, only whether the model also narrates its own choice
+# alongside making it. _stream_and_report() prints this text (see its
+# "reasoning:" line) whenever the model includes it.
 
 
 def _make_one_tool_agent(bound_tool):
@@ -94,6 +113,14 @@ def _stream_and_report(compiled_graph, label: str, initial_messages: list) -> di
 
         tool_calls = getattr(last_message, "tool_calls", None)
         if tool_calls:
+            # The model's own explanation for THIS choice, if it produced
+            # one - Gemini can emit plain text alongside a tool call, not
+            # just the call itself, but only does so reliably when asked
+            # to (see SUPERVISOR_SYSTEM_PROMPT below). Printed before the
+            # call itself so a reader sees "why" before "what".
+            reasoning_text = extract_text(last_message.content) if last_message.content else ""
+            if reasoning_text:
+                print(f"  [{label}] reasoning: {reasoning_text}")
             for tc in tool_calls:
                 print(f"  [{label}] -> calling {tc['name']}({tc['args']})")
         elif getattr(last_message, "type", None) == "tool":
@@ -162,14 +189,35 @@ def build_multi_agent_graph(user_context: dict = None):
         print("[Supervisor] delegating to NL2SQL agent...")
         return _run_subagent_and_get_final_text(nl2sql_agent, "NL2SQL Agent", subtask)
 
-    supervisor_tools = [rag_agent_tool, nl2sql_agent_tool]
+    # --- Step D (Step 15): Tavily's 4 MCP tools, added DIRECTLY - no
+    # sub-agent wrapping, unlike rag_agent_tool/nl2sql_agent_tool above.
+    # Each Tavily operation (search/extract/map/crawl) is a single,
+    # one-shot call with no benefit from its own reasoning loop, so these
+    # are bound to the supervisor exactly like a plain tool would be -
+    # see mcp_tools.py's docstring for the full reasoning.
+    tavily_tools = get_tavily_tools()
+    print(f"[Supervisor] MCP tools discovered from Tavily: {[t.name for t in tavily_tools]}")
+
+    supervisor_tools = [rag_agent_tool, nl2sql_agent_tool, *tavily_tools]
+    # The FULL roster the supervisor is choosing from, printed once up
+    # front - not just the Tavily subset - so a human sees everything
+    # available BEFORE any reasoning/tool-picking happens, not after.
+    print(f"[Supervisor] Full tool roster: {[t.name for t in supervisor_tools]}")
 
     # --- Step C: the supervisor - SAME loop shape as v2's agent, bound to
-    # SUB-AGENTS instead of raw tools ---------------------------------------
+    # SUB-AGENTS + raw MCP tools together ------------------------------------
     supervisor_llm = llm.bind_tools(supervisor_tools)
 
     def supervisor_node(state: MessagesState):
-        response = supervisor_llm.invoke(state["messages"])
+        # The system prompt is prepended fresh on every invocation rather
+        # than stored in graph state - this node only ever RETURNS the AI
+        # response (see below), never the system message itself, so
+        # nothing would persist it into state across turns anyway. This
+        # is the standard LangGraph pattern for a node-level system
+        # prompt: cheap to re-send, and guarantees it's always present
+        # regardless of how many reasoning steps this question takes.
+        messages = [SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT)] + state["messages"]
+        response = supervisor_llm.invoke(messages)
         return {"messages": [response]}
 
     def supervisor_should_continue(state: MessagesState):

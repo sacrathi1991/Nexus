@@ -27,6 +27,13 @@ NORTHWIND_APP_DATABASE_URL = os.getenv("NORTHWIND_APP_DATABASE_URL")
 # credentials to configure locally, so it's not required in .env.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# Tavily's remote MCP server (web search/extract/map/crawl) - Step 15.
+# Remote transport (an HTTP URL, not a local subprocess), since this
+# machine has no Node.js installed and the remote server needs nothing
+# else running locally. Nexus is the MCP CLIENT here; Tavily's own
+# infrastructure is the MCP SERVER.
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
 # resolve config.yaml relative to this file, not the current working directory
 _config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
 with open(_config_path) as f:
@@ -50,3 +57,6 @@ if not NORTHWIND_DATABASE_URL:
 
 if not NORTHWIND_APP_DATABASE_URL:
     raise ValueError("NORTHWIND_APP_DATABASE_URL is missing. Add it to your .env file.")
+
+if not TAVILY_API_KEY:
+    raise ValueError("TAVILY_API_KEY is missing. Add it to your .env file.")

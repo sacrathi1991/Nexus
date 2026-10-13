@@ -12,10 +12,11 @@ Run from the project root:
 Try the SAME compound question as v2, e.g.:
     "What was TCS's Q1 revenue, and how many orders has our top Northwind
     customer placed?"
-Watch the printed "Sub-agent(s) called" line - it will only ever show
-"rag_agent_tool" / "nl2sql_agent_tool", NEVER the raw tool names, since
-the supervisor has no visibility into rag_tool/nl2sql_tool directly -
-only into the 2 wrapped sub-agents.
+Watch the printed "Sub-agent(s) called" line - for RAG/NL2SQL questions
+it will only ever show "rag_agent_tool" / "nl2sql_agent_tool", NEVER the
+raw tool names, since the supervisor has no visibility into
+rag_tool/nl2sql_tool directly - only into the 2 wrapped sub-agents. Step
+15's Tavily tools are the one exception to that isolation - see below.
 
 Step 13 (Redis exact-match cache): ask the SAME question twice in a row
 and watch the "Response source" line change to "REDIS CACHE - EXACT
@@ -29,12 +30,32 @@ tier misses (different text), but the semantic tier should catch it,
 printing "REDIS CACHE - SEMANTIC MATCH (instant)" along with which
 earlier question it matched and the similarity score.
 
+Step 15 (Tavily, via MCP): ask something needing CURRENT/real-world info
+neither RAG nor NL2SQL could ever answer, e.g.:
+    "What is the latest news about Sherwin-Williams stock price today?"
+Watch "Sub-agent(s) called" show "tavily_search" (or tavily_extract/
+tavily_map/tavily_crawl/tavily_research, whichever the supervisor
+decides fits) - these are bound DIRECTLY to the supervisor, not wrapped
+in their own sub-agent, unlike rag_agent_tool/nl2sql_agent_tool. See
+graph/common/mcp_tools.py's docstring for why, and for why this needed a
+local (stdio, via npx) connection to Tavily's MCP server rather than
+their remote one.
+
 For any question that touches NL2SQL, watch the "NL2SQL path" line(s) -
 "semantic_layer" means a pre-built metric answered it (cheap, no SQL
 generated); "nl2sql_generation" means the LLM wrote fresh SQL itself,
 since nothing in the metric catalog matched. A compound question can
 print more than one such line, if NL2SQL was delegated to more than once.
 """
+
+import sys
+sys.stdout.reconfigure(encoding="utf-8")
+# Without this, Windows' terminal defaults to a codepage (cp1252) that
+# can't represent many real characters an answer might contain - e.g. the
+# Rupee sign (TCS revenue figures) - and print() crashes outright rather
+# than just rendering it oddly. UTF-8 covers everything this app could
+# ever print, so this is set once, here, rather than guarded at every
+# individual print() call throughout the codebase.
 
 from graph.v3_multi_agent.build_multi_agent_graph import ask_nexus_multiagent
 

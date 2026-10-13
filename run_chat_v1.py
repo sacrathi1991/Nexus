@@ -17,6 +17,13 @@ from a real HTTP endpoint - this file gets thrown away at that point;
 ask_nexus() won't need to change.
 """
 
+import sys
+sys.stdout.reconfigure(encoding="utf-8")
+# Same fix as run_chat_v3.py - Windows' terminal codepage (cp1252) can't
+# represent every character an answer might contain (e.g. the Rupee sign
+# in TCS revenue figures), which crashes print() outright rather than
+# just rendering it oddly.
+
 from graph.v1_simple_router.build_graph import ask_nexus
 
 print("Nexus v1 (simple router) - type a question ('exit' to quit)\n")
