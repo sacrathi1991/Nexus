@@ -32,6 +32,13 @@ Run from the project root:
 
 import json
 import os
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8")
+# Same fix as run_chat_v1/v2/v3.py - this harness prints real NL2SQL
+# answers/rows, which could contain characters Windows' default terminal
+# codepage (cp1252) can't represent - without this, print() crashes
+# outright instead of just rendering it oddly.
 
 from services.nl2sql_service import ask_db
 

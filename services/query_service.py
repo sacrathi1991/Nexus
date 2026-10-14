@@ -24,6 +24,7 @@ from db.models import DocumentChunk, ChatSession, Message
 from llm.embeddings_client import embeddings
 from llm.llm_client import llm
 from llm.prompts import RAG_PROMPT
+from services.groundedness_check import check_groundedness
 
 TOP_K = 5
 # How many chunks to retrieve per question. A constant here (not in
@@ -145,7 +146,11 @@ def ask(question: str, session_id: int | None = None, user_id: int | None = None
         user_id    — which user this session belongs to (nullable for now, same as
                      documents.uploaded_by — no auth system built yet)
 
-    Returns a dict: {"answer": str, "source_chunk_ids": list[int], "session_id": int}
+    Returns a dict: {"answer": str, "source_chunk_ids": list[int],
+    "session_id": int, "grounded": bool, "unsupported_claims": str} -
+    grounded/unsupported_claims come from Step 17's groundedness check
+    (services/groundedness_check.py), run against the same chunks the
+    answer was generated from.
     """
     db = SessionLocal()
 
@@ -189,6 +194,9 @@ def ask(question: str, session_id: int | None = None, user_id: int | None = None
         # short-circuit instead of sending an empty context to the LLM.
         answer = "I don't have any documents ingested yet to answer that from."
         source_chunk_ids = []
+        grounded, unsupported_claims = True, ""
+        # Nothing to hallucinate against an empty context - the check is
+        # skipped, not run and passed, since there's no {context} to verify against.
     else:
         # --- Step 5: build the prompt and ask the LLM -----------------------
         context = _build_context(chunks)
@@ -199,6 +207,14 @@ def ask(question: str, session_id: int | None = None, user_id: int | None = None
         # This list is exactly what gets stored on the assistant message
         # below — it's the traceability link the Day 5 SOW's correction
         # flow depends on entirely.
+
+        # --- Step 5.5 (Step 17): output-side groundedness check ---------------
+        # Same retrieved chunks, re-used as the verification source - no
+        # second retrieval, just a second LLM call checking the FIRST
+        # call's own answer against what it was actually given to read.
+        groundedness = check_groundedness(answer, context)
+        grounded = groundedness["grounded"]
+        unsupported_claims = groundedness["unsupported_claims"]
 
     # --- Step 6: save the assistant's message, WITH its source chunks ------
     db.add(Message(
@@ -223,4 +239,6 @@ def ask(question: str, session_id: int | None = None, user_id: int | None = None
         "answer": answer,
         "source_chunk_ids": source_chunk_ids,
         "session_id": session_id_value,
+        "grounded": grounded,
+        "unsupported_claims": unsupported_claims,
     }

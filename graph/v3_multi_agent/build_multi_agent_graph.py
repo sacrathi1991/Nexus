@@ -33,6 +33,7 @@ from graph.common.text_utils import extract_text
 from graph.common.response_cache import get_cached_response, set_cached_response
 from graph.common.semantic_cache import get_semantically_cached_response, set_semantically_cached_response
 from graph.common.mcp_tools import get_tavily_tools
+from graph.common.input_guardrail import check_input_guardrail
 
 from llm.llm_client import llm
 from graph.common.agent_tools import make_rag_tool, make_nl2sql_tool
@@ -152,18 +153,19 @@ def build_multi_agent_graph(user_context: dict = None):
     supervisor can call (Step B), and one supervisor bound to those
     wrapped tools (Step C).
 
-    Returns (compiled_supervisor_graph, session_holder, nl2sql_source_log) -
-    session_holder is the same session_id-tracking mechanism as v2, and
-    nl2sql_source_log is a mutable list nl2sql_tool appends to every time
-    it runs, so the caller can report "picked from the semantic model" vs
-    "LLM generated its own SQL" explicitly, for every NL2SQL call made
-    this turn - see make_nl2sql_tool()'s docstring in agent_tools.py.
+    Returns (compiled_supervisor_graph, session_holder, nl2sql_source_log,
+    rag_source_log) - session_holder is the same session_id-tracking
+    mechanism as v2, nl2sql_source_log is a mutable list nl2sql_tool
+    appends to every time it runs (semantic-layer vs freeform), and
+    rag_source_log is the same pattern for Step 17's groundedness verdict
+    - see make_rag_tool()/make_nl2sql_tool()'s docstrings in agent_tools.py.
     """
     session_holder = {"session_id": None}
     nl2sql_source_log = []
+    rag_source_log = []
 
     # --- Step A: 2 separately-compiled, single-tool sub-agents ------------
-    rag_tool = make_rag_tool(session_holder)
+    rag_tool = make_rag_tool(session_holder, rag_source_log)
     nl2sql_tool = make_nl2sql_tool(user_context, nl2sql_source_log)
 
     rag_agent = _make_one_tool_agent(rag_tool)
@@ -237,21 +239,27 @@ def build_multi_agent_graph(user_context: dict = None):
     # Total for this version: 3 separate graph.compile() calls
     # (2 sub-agents + 1 supervisor), versus v2's single graph.compile().
 
-    return compiled_supervisor, session_holder, nl2sql_source_log
+    return compiled_supervisor, session_holder, nl2sql_source_log, rag_source_log
 
 
 def ask_nexus_multiagent(question: str, session_id: int = None, user_context: dict = None) -> dict:
-    """The single entry point - checks TWO cache tiers before running the
+    """The single entry point - checks the INPUT GUARDRAIL first (Step
+    16), before anything else, then TWO cache tiers before running the
     full multi-agent hierarchy, in order:
+        0. Input guardrail (input_guardrail.py) - jailbreak attempt or
+           out-of-scope request? Blocked here costs one small LLM call
+           and nothing else - no cache lookup, no Tavily/DB/embedding
+           calls ever happen for a question that gets blocked.
         1. Exact-match cache (response_cache.py) - same question, worded
            identically. Free to check, zero API cost.
         2. Semantic cache (semantic_cache.py) - same question, worded
            differently. Costs one embedding call to check, catches
            paraphrases the exact-match tier can't.
-    Only on a miss from BOTH does the full pipeline run. Returns:
+    Only on a miss from BOTH cache tiers does the full pipeline run. Returns:
         {"answer": str, "sub_agents_called": list[str],
          "session_id": int | None, "from_cache": bool,
-         "cache_type": "exact" | "semantic" | None}
+         "cache_type": "exact" | "semantic" | None,
+         "blocked_by_guardrail": bool}
 
     from_cache/cache_type are the explicit, always-present signal for
     whether (and HOW) this answer came from Redis instead of a full
@@ -272,15 +280,34 @@ def ask_nexus_multiagent(question: str, session_id: int = None, user_context: di
     conversation if a similar/identical question was ever asked before.
     Not fixed here - documented as a real tradeoff of keeping this simple.
     """
+    guardrail = check_input_guardrail(question)
+    print(
+        f"[Guardrail] jailbreak_attempt={guardrail['jailbreak_attempt']} "
+        f"in_scope={guardrail['in_scope']} - {guardrail['reason']}"
+    )
+    if not guardrail["allowed"]:
+        return {
+            "answer": f"I can't help with that. {guardrail['reason']}",
+            "sub_agents_called": [],
+            "nl2sql_source_log": [],
+            "rag_source_log": [],
+            "session_id": session_id,
+            "from_cache": False,
+            "cache_type": None,
+            "blocked_by_guardrail": True,
+        }
+
     exact_hit = get_cached_response(question, user_context)
     if exact_hit is not None:
         return {
             "answer": exact_hit["answer"],
             "sub_agents_called": exact_hit["sub_agents_called"],
             "nl2sql_source_log": exact_hit.get("nl2sql_source_log", []),
+            "rag_source_log": exact_hit.get("rag_source_log", []),
             "session_id": session_id,  # THIS caller's session, never overwritten by the cache
             "from_cache": True,
             "cache_type": "exact",
+            "blocked_by_guardrail": False,
         }
 
     semantic_hit = get_semantically_cached_response(question, user_context)
@@ -289,14 +316,16 @@ def ask_nexus_multiagent(question: str, session_id: int = None, user_context: di
             "answer": semantic_hit["answer"],
             "sub_agents_called": semantic_hit["sub_agents_called"],
             "nl2sql_source_log": semantic_hit.get("nl2sql_source_log", []),
+            "rag_source_log": semantic_hit.get("rag_source_log", []),
             "session_id": session_id,
             "from_cache": True,
             "cache_type": "semantic",
             "matched_question": semantic_hit["matched_question"],
             "similarity_score": semantic_hit["similarity_score"],
+            "blocked_by_guardrail": False,
         }
 
-    compiled_supervisor, session_holder, nl2sql_source_log = build_multi_agent_graph(user_context)
+    compiled_supervisor, session_holder, nl2sql_source_log, rag_source_log = build_multi_agent_graph(user_context)
     session_holder["session_id"] = session_id
 
     print("[Supervisor] starting...")
@@ -312,20 +341,23 @@ def ask_nexus_multiagent(question: str, session_id: int = None, user_context: di
         "answer": extract_text(result["messages"][-1].content),
         "sub_agents_called": sub_agents_called,
         "nl2sql_source_log": nl2sql_source_log,
+        "rag_source_log": rag_source_log,
         "session_id": session_holder["session_id"],
         "from_cache": False,
         "cache_type": None,
+        "blocked_by_guardrail": False,
     }
 
-    # Only answer + sub_agents_called + nl2sql_source_log are cached -
-    # session_id is specific to THIS conversation and must never leak into
-    # a future cache hit for a different caller. Stored in BOTH tiers, so
-    # either a later exact repeat or a later paraphrase of this SAME
-    # question can hit on the next ask.
+    # Only answer + sub_agents_called + nl2sql_source_log + rag_source_log
+    # are cached - session_id is specific to THIS conversation and must
+    # never leak into a future cache hit for a different caller. Stored in
+    # BOTH tiers, so either a later exact repeat or a later paraphrase of
+    # this SAME question can hit on the next ask.
     cacheable_result = {
         "answer": response["answer"],
         "sub_agents_called": response["sub_agents_called"],
         "nl2sql_source_log": response["nl2sql_source_log"],
+        "rag_source_log": response["rag_source_log"],
     }
     set_cached_response(question, user_context, cacheable_result)
     set_semantically_cached_response(question, user_context, cacheable_result)

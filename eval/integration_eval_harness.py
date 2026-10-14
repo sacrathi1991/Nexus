@@ -36,6 +36,14 @@ Run from the project root:
 
 import json
 import os
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8")
+# Same fix as run_chat_v1/v2/v3.py - this harness prints real RAG/NL2SQL
+# answers via the same streaming/reasoning trace, which can contain
+# characters (e.g. the Rupee sign in TCS revenue figures) Windows'
+# default terminal codepage (cp1252) can't represent - without this,
+# print() crashes outright instead of just rendering it oddly.
 
 from graph.v3_multi_agent.build_multi_agent_graph import ask_nexus_multiagent
 

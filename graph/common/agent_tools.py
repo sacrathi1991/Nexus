@@ -33,12 +33,19 @@ from services.query_service import ask
 from services.nl2sql_service import ask_db
 
 
-def make_rag_tool(session_holder: dict):
+def make_rag_tool(session_holder: dict, source_log: list = None):
     """Returns a rag_tool bound to ONE conversation's session_id, tracked
     via a mutable dict (session_holder) so the session_id ask() creates on
     its first call can be read back by the caller after this tool runs -
     a plain closure over an immutable value couldn't do that, since the
     value needs to be written back out, not just read.
+
+    source_log (optional): same pattern as make_nl2sql_tool()'s source_log
+    - a mutable list this tool APPENDS to every time it runs, with Step
+    17's groundedness verdict: {"subtask": ..., "grounded": bool,
+    "unsupported_claims": str}. Used by graph/v3_multi_agent's
+    ask_nexus_multiagent() to surface groundedness explicitly for display,
+    the same way nl2sql_source_log surfaces semantic-layer-vs-freeform.
     """
 
     @tool
@@ -49,7 +56,23 @@ def make_rag_tool(session_holder: dict):
         business narrative, or anything from a report or transcript."""
         result = ask(question=question, session_id=session_holder.get("session_id"))
         session_holder["session_id"] = result["session_id"]
-        return f"{result['answer']}\n(Source: RAG document chunks {result['source_chunk_ids']})"
+
+        if source_log is not None:
+            source_log.append({
+                "subtask": question,
+                "grounded": result["grounded"],
+                "unsupported_claims": result["unsupported_claims"],
+            })
+
+        citation = f"(Source: RAG document chunks {result['source_chunk_ids']})"
+        if not result["grounded"]:
+            # Visible to the LLM reading this tool's output too, not just
+            # to a human reading the structured source_log afterward - the
+            # supervisor/sub-agent can factor this into how confidently it
+            # repeats this claim onward.
+            citation += f"\n(WARNING: possible unsupported claim - {result['unsupported_claims']})"
+
+        return f"{result['answer']}\n{citation}"
 
     return rag_tool
 
